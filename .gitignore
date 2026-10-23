@@ -1,0 +1,4 @@
+/target/
+.env
+*.lic
+__pycache__/

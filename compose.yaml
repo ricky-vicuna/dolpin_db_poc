@@ -1,0 +1,64 @@
+name: dolphindb-perps
+services:
+  dolphindb:
+    image: docker.io/dolphindb/dolphindb:v3.00.5
+    hostname: dolphindb
+    working_dir: /data/ddb/server
+    environment:
+      LD_LIBRARY_PATH: /data/ddb/server
+      TZ: UTC
+    entrypoint: ["/data/ddb/server/dolphindb"]
+    command: ["-console", "0", "-mode", "single", "-config", "/app/dolphindb.cfg", "-home", "/data/poc", "-logFile", "/data/poc/dolphindb.log"]
+    ports:
+      - "127.0.0.1:8848:8848"
+    volumes:
+      - ddb-data:/data/poc
+      - ./dolphindb/dolphindb.cfg:/app/dolphindb.cfg:ro,Z
+    restart: unless-stopped
+    stop_grace_period: 60s
+
+  collector:
+    build: .
+    environment:
+      DDB_URL: http://dolphindb:8848
+      DDB_USER: ${DDB_USER:-admin}
+      DDB_PASSWORD: ${DDB_PASSWORD:-123456}
+      FEED_MODE: ${FEED_MODE:-live}
+      SYMBOL_COUNT: ${SYMBOL_COUNT:-50}
+      SYMBOLS: ${SYMBOLS:-}
+      BATCH_MS: ${BATCH_MS:-20}
+      BATCH_SIZE: ${BATCH_SIZE:-250}
+      QUEUE_CAPACITY: ${QUEUE_CAPACITY:-10000}
+      SYNTHETIC_INTERVAL_MS: ${SYNTHETIC_INTERVAL_MS:-100}
+      BINANCE_REST_URL: ${BINANCE_REST_URL:-https://fapi.binance.com}
+      BINANCE_WS_URL: ${BINANCE_WS_URL:-wss://fstream.binance.com}
+      RUST_LOG: ${RUST_LOG:-info}
+    depends_on:
+      dolphindb:
+        condition: service_started
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+  grafana:
+    build: ./grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_MIN_REFRESH_INTERVAL: 1s
+      GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: dolphindb-datasource-next
+      DDB_USER: ${DDB_USER:-admin}
+      DDB_PASSWORD: ${DDB_PASSWORD:-123456}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro,Z
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro,Z
+    depends_on:
+      dolphindb:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  ddb-data:
+  grafana-data:

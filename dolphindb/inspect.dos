@@ -1,0 +1,8 @@
+// Inspect subscriber queue depth / errors as well as raw ingress persistence.
+getStreamingStat()
+getPersistenceMeta(rawStream)
+select count(*) as rows, max(eventTs) as latestEvent from loadTable("dfs://perps", "books") where eventDate=date(now())
+select count(*) as rows, max(eventTs) as latestEvent from loadTable("dfs://perps", "factors") where eventDate=date(now())
+select distinct symbol from factorStream order by symbol
+select count(*) as rows from loadTable("dfs://perps", "latency") where eventDate=date(now())
+select count(*) as observations,percentile(exchangeToReceiveMs,50) as receiveP50Ms,percentile(exchangeToReceiveMs,99) as receiveP99Ms,percentile(receiveToIngestMs,99) as ingestP99Ms,percentile(ingestToComputeMs,99) as computeP99Ms from loadTable("dfs://perps", "latency") where eventDate=date(now()),eventTs>now()-60000 group by symbol

@@ -1,0 +1,62 @@
+// Executed after authenticated REST login. One collector/initializer per database.
+// Shared objects survive collector restarts. A database restart starts a fresh live epoch.
+if (!existsDatabase("dfs://perps")) {
+    days = database("", VALUE, 2024.01.01..2035.12.31)
+    symbols = database("", HASH, [SYMBOL, 8])
+    database("dfs://perps", COMPO, [days, symbols], engine="TSDB")
+}
+db = database("dfs://perps")
+rawNames = `symbol`eventDate`eventTs`transactionTs`receiveTs`ingestTs`firstId`updateId`previousId`bp1`bq1`ap1`aq1`bp2`bq2`ap2`aq2`bp3`bq3`ap3`aq3`bp4`bq4`ap4`aq4`bp5`bq5`ap5`aq5
+rawTypes = [SYMBOL,DATE,TIMESTAMP,TIMESTAMP,NANOTIMESTAMP,NANOTIMESTAMP,LONG,LONG,LONG,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE]
+factorNames = `symbol`eventDate`eventTs`transactionTs`receiveTs`ingestTs`computeTs`updateId`mid`spread`spreadBps`imbalance5`imbalanceEma20`micropriceEdgeBps
+factorTypes = [SYMBOL,DATE,TIMESTAMP,TIMESTAMP,NANOTIMESTAMP,NANOTIMESTAMP,NANOTIMESTAMP,LONG,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE,DOUBLE]
+latencyNames = `symbol`eventDate`eventTs`updateId`transactionTs`receiveTs`ingestTs`computeTs`exchangeToReceiveMs`receiveToIngestMs`ingestToComputeMs
+latencyTypes = [SYMBOL,DATE,TIMESTAMP,LONG,TIMESTAMP,NANOTIMESTAMP,NANOTIMESTAMP,NANOTIMESTAMP,DOUBLE,DOUBLE,DOUBLE]
+if (!existsTable("dfs://perps", "books")) {
+    db.createPartitionedTable(table(1:0, rawNames, rawTypes), `books, `eventDate`symbol, sortColumns=`symbol`eventTs`updateId, keepDuplicates=ALL)
+}
+if (!existsTable("dfs://perps", "factors")) {
+    db.createPartitionedTable(table(1:0, factorNames, factorTypes), `factors, `eventDate`symbol, sortColumns=`symbol`eventTs`updateId, keepDuplicates=ALL)
+}
+if (!existsTable("dfs://perps", "latency")) {
+    db.createPartitionedTable(table(1:0, latencyNames, latencyTypes), `latency, `eventDate`symbol, sortColumns=`symbol`eventTs`updateId, keepDuplicates=ALL)
+}
+
+// The readiness marker is shared only AFTER every subscription has been installed.
+if (!("pocReady" in (exec name from objs(true)))) {
+    enableTableShareAndPersistence(table=streamTable(10000:0,rawNames,rawTypes), tableName=`rawStream,
+        asynWrite=false, cacheSize=100000, retentionMinutes=60, flushMode=1, preCache=100000)
+    enableTableShareAndCachePurge(table=streamTable(10000:0,factorNames,factorTypes), tableName=`factorStream, cacheSize=100000)
+    go
+
+    // All factor arithmetic and per-symbol state are maintained inside DolphinDB.
+    obi = <(bq1+bq2+bq3+bq4+bq5-aq1-aq2-aq3-aq4-aq5)/(bq1+bq2+bq3+bq4+bq5+aq1+aq2+aq3+aq4+aq5)>
+    // The database process must run with TZ=UTC (set in compose.yaml).
+    metrics = [<eventDate>,<eventTs>,<transactionTs>,<receiveTs>,<ingestTs>,<now(true)>,<updateId>,
+        <(bp1+ap1)/2>, <ap1-bp1>, <20000*(ap1-bp1)/(bp1+ap1)>,
+        obi, <ema((bq1+bq2+bq3+bq4+bq5-aq1-aq2-aq3-aq4-aq5)/(bq1+bq2+bq3+bq4+bq5+aq1+aq2+aq3+aq4+aq5),20)>,
+        <10000*((ap1*bq1+bp1*aq1)/(bq1+aq1)-(bp1+ap1)/2)/((bp1+ap1)/2)>]
+    engine = createReactiveStateEngine(name="bookFactors", metrics=metrics, dummyTable=objByName("rawStream"),
+        outputTable=objByName("factorStream"), keyColumn=`symbol)
+
+    def saveRaw(msg) {
+        loadTable("dfs://perps", "books").append!(msg)
+    }
+    def saveFactors(msg) {
+        loadTable("dfs://perps", "factors").append!(msg)
+        timing = select symbol,eventDate,eventTs,updateId,transactionTs,receiveTs,ingestTs,computeTs,
+            (long(receiveTs)-long(nanotimestamp(eventTs)))/1000000.0 as exchangeToReceiveMs,
+            (long(ingestTs)-long(receiveTs))/1000000.0 as receiveToIngestMs,
+            (long(computeTs)-long(ingestTs))/1000000.0 as ingestToComputeMs from msg
+        loadTable("dfs://perps", "latency").append!(timing)
+    }
+    subscribeTable(tableName=`rawStream, actionName="compute", offset=-1, handler=engine,
+        msgAsTable=true, batchSize=1, throttle=0.001, hash=0)
+    subscribeTable(tableName=`rawStream, actionName="archiveRaw", offset=-1, handler=saveRaw,
+        msgAsTable=true, batchSize=1000, throttle=0.2, hash=1)
+    subscribeTable(tableName=`factorStream, actionName="archiveFactors", offset=-1, handler=saveFactors,
+        msgAsTable=true, batchSize=1000, throttle=0.2, hash=1)
+    share table(1:0, ["ready"], [BOOL]) as pocReady
+    tableInsert(objByName("pocReady"), true)
+}
+"perps pipeline ready"

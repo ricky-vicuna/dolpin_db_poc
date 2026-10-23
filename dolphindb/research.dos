@@ -1,0 +1,5 @@
+// Change symbol/date/window. The forward return is a research label, NEVER a live factor.
+// One-second last observations; next() is the next OBSERVED bucket, so require a 1s gap.
+bars = select last(mid) as mid,last(imbalance5) as imbalance,last(imbalanceEma20) as smoothed from loadTable("dfs://perps", "factors") where eventDate=date(now()),symbol="BTCUSDT",eventTs>now()-3600000 group by symbol,bar(eventTs,1s) as ts
+labels = select *,next(ts) as nextTs,10000*(next(mid)/mid-1) as forwardReturnBps from bars context by symbol csort ts
+select count(*) as samples,corr(imbalance,forwardReturnBps) as rawIC,corr(smoothed,forwardReturnBps) as smoothedIC from labels where nextTs-ts=1000

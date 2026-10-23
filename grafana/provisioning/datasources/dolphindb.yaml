@@ -1,0 +1,19 @@
+{
+  "apiVersion": 1,
+  "datasources": [{
+    "name": "DolphinDB",
+    "uid": "dolphindb",
+    "type": "dolphindb-datasource-next",
+    "access": "proxy",
+    "isDefault": true,
+    "editable": false,
+    "jsonData": {
+      "url": "dolphindb:8848",
+      "autologin": true,
+      "username": "$DDB_USER",
+      "password": "$DDB_PASSWORD",
+      "python": false,
+      "poolCapacity": "2"
+    }
+  }]
+}
