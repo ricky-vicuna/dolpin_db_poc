@@ -74,6 +74,23 @@ docker compose up -d
 docker compose down -v
 ```
 
+### CSV and Parquet export
+
+The pinned DolphinDB 3.00.5 image already **bundles the official Parquet plugin**. `scripts/export.py` loads it on demand (idempotently) and writes a bounded UTC slice into the DolphinDB named volume. Nothing is fetched from a different plugin release or committed as a vendor binary.
+
+```bash
+python3 scripts/export.py --table latency --symbol BTCUSDT --minutes 2 --format parquet
+python3 scripts/export.py --table factors --symbol BTCUSDT --minutes 1 --format csv
+```
+
+The script prints the resulting `/data/poc/...` filename. Copy it to the Podman host:
+
+```bash
+podman cp dolphindb-perps_dolphindb_1:/data/poc/<printed-filename>.parquet .
+```
+
+Exports end at the last **complete** UTC minute; the `[start,end)` interval spans 1–5 minutes to avoid materializing a whole trading day in database memory. Re-run the command for another window or adapt the script for paged historical exports. `parquet::saveParquet` materializes this small filtered table; CSV uses DolphinDB's `saveText` SQL metacode path. Both files are written on the database container first, not downloaded through the browser. For Parquet details see the [DolphinDB Parquet plugin docs](https://docs.dolphindb.com/en/Plugins/parquet.html).
+
 The DolphinDB web console is at **http://localhost:8848** (database login `admin / 123456`). Bindings are localhost-only. `DDB_USER`/`DDB_PASSWORD` configure clients; setting them does not change the database's account. The upstream Grafana plugin takes its password in `jsonData`; this demo uses a local disposable account.
 
 ## Architecture
